@@ -57,7 +57,24 @@ TODO: documentar el bucle, sus límites y la confirmación humana aplicada por e
 
 ## 4. Elección del modelo
 
-TODO: documentar proveedor, modelo, justificación y costo estimado por caso.
+**Proveedor y modelo.** Anthropic, a través de `src/llm/anthropic.ts`. El modelo sale de la variable `MODEL`; si no se define, `src/server.ts` usa `claude-haiku-5-5` (mismo valor en `.env.example`). El ciclo del agente solo conoce la interfaz neutra `LlmAdapter` (`src/llm/adapter.ts`), así que cambiar de modelo es cambiar una variable y cambiar de proveedor es escribir otro adaptador. `LLM_PROVIDER` distinto de `anthropic` hoy falla con un error explícito: no hay segundo proveedor implementado.
+
+**Por qué un modelo pequeño.** El modelo solo decide qué herramienta llamar y redacta; las reglas, el payload y el hash los calcula el código. No se comparó la calidad de varios modelos: la elección de `claude-haiku-5-5` es por defecto de costo/latencia y no está respaldada por un benchmark propio.
+
+**Costo por caso: no medido.** No incluyo tokens inventados. Al redactar esto no existía `out/llm.jsonl` (se limpia con `demo.ts`, que no usa modelo) ni había `ANTHROPIC_API_KEY` en el entorno, así que no hay cifras reales de sol-001 ni de sol-004 en dos turnos. Para obtenerlas:
+
+1. Con clave en `.env`, ejecutar `bun run dev` y procesar sol-001 en una sesión nueva; luego sol-004 en otra (turno 1: procesar; turno 2: "confirmo").
+2. Leer `GET /api/sessions/<id>`: el campo `tokens` trae `{ entrada, salida }` acumulados de toda la sesión, incluido el paso final de texto.
+3. `out/llm.jsonl` guarda `{ ts, sessionId, herramienta, ok, entrada, salida }` solo para los pasos del modelo que pidieron una herramienta; el paso final que solo redacta no se registra ahí, así que la suma de ese archivo subestima el total.
+
+| Caso | Tokens de entrada | Tokens de salida | Costo |
+|---|---|---|---|
+| sol-001 (sin confirmación, 1 turno) | [MEDIR] | [MEDIR] | [MEDIR] |
+| sol-004 (con confirmación, 2 turnos) | [MEDIR] | [MEDIR] | [MEDIR] |
+
+Fórmula: `costo = tokens_entrada × precio_entrada_por_millón / 1.000.000 + tokens_salida × precio_salida_por_millón / 1.000.000`, con `precio_entrada_por_millón = [PRECIO_VERIFICAR]` y `precio_salida_por_millón = [PRECIO_VERIFICAR]` para el modelo configurado. Ver la tarifa vigente del modelo en la página de precios del proveedor.
+
+**Topes de gasto implementados** (`src/agent/loop.ts`, `src/server.ts`): `MAX_ITER` = 25 pasos por turno, `MAX_TOKENS_SESION` = 200.000 por sesión, `MAX_TOKENS_RESPUESTA` = 2.048 por respuesta, `LLM_TIMEOUT_MS` = 60.000 y 200 sesiones simultáneas. Todos son configurables por variable de entorno salvo el límite de sesiones, que es una constante.
 
 ## 5. Matriz de controles
 
@@ -131,15 +148,51 @@ El objetivo no debe ser simplemente llevar el porcentaje a cero, sino eliminar c
 
 ## 8. Decisiones y trade-offs
 
-TODO: registrar al menos tres decisiones, sus alternativas descartadas y la razón.
+| # | Decisión | Alternativa descartada | Por qué |
+|---|---|---|---|
+| 1 | **Confirmación aplicada en el servidor.** `forzarConfirmacion` (`src/agent/confirmacion.ts`) ignora el `confirmado` que envía el modelo: solo es `true` si el mensaje actual es un afirmativo y había un caso pendiente en la sesión. | Instruir en el prompt "no pongas `confirmado: true` sin permiso". | Un prompt no es un control: el modelo puede equivocarse o ser inducido por el texto de un correo. El costo es una regla rígida (regex de afirmativos en español, ver §12) y un bug que ya ocurrió: el estado pendiente se perdía tras `oc_generar_evidencia`; se corrigió y `demo.ts` tiene una regresión de dos turnos con un modelo falso. |
+| 2 | **`oc_crear` reconstruye el payload y compara hash.** Rehace la OC desde el caso y compara `huella()` (sha256 del JSON canónico, sin `confirmado_por` ni `confirmado_ts`) con el payload recibido; si difiere, registra `rechazada` y no crea. | Confiar en el payload que pasa el modelo, validado solo con zod. | zod valida forma, no verdad: un monto cambiado "para que cuadre" sería válido en esquema. Coincide con el riesgo del PRD §10. Costo: cada creación relee fixtures y regenera la evidencia, y el modelo debe reenviar `orden` sin tocarlo. |
+| 3 | **RC1–RC10 como funciones puras** `(paquete, maestros) => Hallazgo[]` en `src/rules/rc.ts`; `evaluarPaquete` solo las compone. | Un validador monolítico con un `if` por regla, o dejar que el modelo razone las reglas. | Cada regla se prueba sola, sin modelo ni disco, y el resultado es determinista. Costo: hay que mantener el arreglo `REGLAS` y que ciertas reglas se apoyen en otras (RC2 omite el centro inexistente porque lo reporta RC4). |
+| 4 | **Argumentos validados con zod; el error vuelve al modelo.** `ejecutarLlamada` hace `safeParse` del esquema de la herramienta y, si falla, devuelve `{ ok: false, error }` legible como resultado de la herramienta. | Lanzar la excepción y abortar el turno, o aceptar los argumentos sin validar. | El modelo ve el mensaje y puede corregir y reintentar dentro del mismo turno, con tope en `MAX_ITER`. Nada que viene del modelo llega sin validar a una herramienta. Costo: un reintento consume tokens; no hay prueba automática de este camino con un modelo real. |
+| 5a | **Front en un `web/index.html` sin build.** | React u otro framework con build. | Arranque con un comando, sin dependencias de front (marked por CDN) y nada que compilar para desplegar. Costo: sin componentes ni tipado en el front, y depende de un CDN. |
+| 5b | **Hono sobre `Bun.serve` directo.** | Router a mano sobre `Bun.serve`. | Rutas y estáticos con poco código y respuestas JSON tipadas; solo suma una dependencia pequeña. `server.ts` sigue exportando `{ port, fetch }`, que es lo que Bun consume. |
+| 6 | **Sesiones en memoria** (`Map` en `server.ts`) con tope de 200 sesiones, de tokens por sesión y de iteraciones por turno. | Persistirlas en archivo o base de datos. | El PRD no pide persistencia y CLAUDE.md prohíbe agregar base de datos. Costo: se pierden al reiniciar y no se evictan (ver §12). Los topes cumplen el requisito de costo del PRD §8. |
+| 7 | **`modulo/` generado por `scripts/sync-modulo.ts`** desde `agent/prompt.md`, `src/knowledge/*.md` y `src/tools/oc.ts`; `--check` detecta divergencias. | Mantener copias a mano de cada archivo. | Una sola fuente por contenido: editar el prompt y olvidar la copia es justo lo que penaliza el bonus. Costo: hay que correr `bun run sync` tras cada cambio del prompt, el conocimiento o las herramientas. |
 
 ## 9. Supuestos
 
-TODO: enumerar los supuestos adoptados al interpretar el PRD.
+Tomados del PRD §10:
+- Los maestros de `fixtures/` están completos y vigentes. En producción habría que consultarlos en SAP en tiempo real.
+- El correo de aprobación es evidencia suficiente. Auditoría podría exigir firma digital.
+
+Adoptados al interpretar el PRD y el código:
+- **Aprobación literal.** Se considera aprobada si el cuerpo contiene "aprobado" (sin distinguir mayúsculas) y no contiene "no aprobado" (`src/tools/paquete.ts`). Es una heurística de texto: no distingue "desaprobado" de "aprobado" y no entiende frases más complejas.
+- **RC10**: tolerancia de ±1 unidad monetaria (`|cantidad × valor_unitario − valor_total| ≤ 1`), como pide el PRD §7.3. **RC5**: tolerancia de 2 % sobre el valor de la solicitud.
+- **Clave del caso** = nombre de la carpeta en `fixtures/reto-03/solicitudes/` (p. ej. `sol-004`). El servidor la normaliza a minúsculas y toma el último segmento si el modelo envía una ruta.
+- **Un caso, una OC.** La idempotencia es por `solicitud_id`: una segunda creación devuelve el número existente aunque el payload cambie.
+- **Fechas** (RC8 y RC9) se comparan solo por día (`YYYY-MM-DD`), sin hora.
+- **RC3 sin aprobador identificado**: se usa el mayor tope del centro, de modo que el bloqueo por tope no oculta que falta el aprobador (lo reporta RC2).
+- **Proveedor** se busca por NIT sin puntos ni dígito de verificación; solo si la solicitud no trae NIT se busca por nombre normalizado (sin tildes ni signos).
+- **Descripción de la posición** truncada a 40 caracteres en el payload, y registrada en la trazabilidad como truncamiento.
+- **Confirmación humana** = mensaje que empieza con un afirmativo en español ("sí", "confirmo", "dale", "adelante"…) y no contiene negaciones. `confirmado_por` se escribe como `analista (sesión <id>)`: es el identificador de la sesión del navegador, no una identidad autenticada.
+- **Una sesión equivale a una conversación**; no hay usuarios ni autenticación.
+- **Numeración SAP simulada**: secuencial desde 4500000001 en `out/sap/ordenes.jsonl`.
 
 ## 10. Cobertura
 
-TODO: construir la tabla de historias de usuario, estado y brechas para producción.
+Estado según el código y `demo.ts` (15 verificaciones, sin modelo). La conversación con el modelo real se probó a mano y no tiene prueba automática.
+
+| HU | Estado | Qué hay | Qué falta para producción |
+|---|---|---|---|
+| HU-1 Leer el paquete | **Hecho** | `oc_leer_paquete` normaliza correo, solicitud, cotización, aprobación y factura opcional; un adjunto ausente se reporta en `faltantes` sin lanzar excepción. | Adjuntos reales (no JSON ni texto), ver P1. El PRD pide `null` por adjunto ausente; aquí se devuelve además la lista `faltantes`. |
+| HU-2 Validar | **Hecho** | RC1–RC10 como funciones puras; `oc_validar` devuelve `apta`, `bloqueos`, `confirmaciones` y `derivados`. `demo.ts` comprueba el resultado esperado de los seis casos. | Maestros desde SAP en tiempo real; pruebas unitarias por regla con casos límite (hoy solo cubren los seis fixtures). |
+| HU-3 Payload | **Hecho** | `oc_construir_payload` valida con zod y guarda `out/<caso>/trazabilidad.json` con la fuente de cada valor. | Mapeo al servicio OData real (ver §6); no se probó contra SAP. |
+| HU-4 Evidencia | **Parcial** | P0: `out/<caso>/aprobacion.txt` con encabezados, cuerpo y sha256. | **P1 no hecho:** no se genera `aprobacion.pdf` y `pdf-lib` no está en las dependencias. Para producción: PDF adjunto a la OC en SAP y, si auditoría lo exige, firma digital. |
+| HU-5 Crear OC | **Hecho** | Exige `apta` y confirmación, reconstruye y compara hash, número secuencial desde 4500000001, idempotente por `solicitud_id`, una fila en `out/control.csv` por intento. | Adaptador SAP real, almacenamiento duradero de `out/` y bloqueo distribuido en lugar de la cola en memoria del mock. |
+| HU-6 Errores | **Parcial** | Las herramientas nunca lanzan: devuelven `{ ok: false, error }` en español; zod valida los argumentos; el modelo agotado o con timeout produce un mensaje claro. | `demo.ts` no ejercita JSON malformado ni montos no numéricos. Que el agente "sugiera qué pedir al solicitante" depende del prompt y no está verificado con pruebas. |
+| P1 `oc_leer_excel` (`.xlsx`) | **No hecho** | No existe la herramienta ni hay `.xlsx` en los fixtures; la solicitud se lee de JSON. | Lector de `.xlsx` y de PDF de cotización con validación de formato. |
+
+Bonus: `modulo/` (agente, skill y herramientas) se genera con `bun run sync`; `bun run sync --check` verifica que no diverja.
 
 ## 11. Uso de IA
 
@@ -147,4 +200,13 @@ TODO: declarar asistentes, tareas realizadas, propuestas descartadas y motivos.
 
 ## 12. Riesgos
 
-TODO: identificar riesgos de producción y sus mitigaciones.
+| Riesgo | Situación actual | Mitigación |
+|---|---|---|
+| `out/` efímero en Railway | Las OC, `control.csv` y los logs se escriben en `out/` del disco del contenedor; el repositorio no configura ningún volumen. Si el contenedor se reinicia o se vuelve a desplegar, el mock SAP vuelve a numerar desde 4500000001 y se pierde la auditoría. | Montar un volumen o, mejor, reemplazar `SapMock` por el adaptador real (§6) y enviar `control.csv` y `log.jsonl` a un almacén duradero. |
+| Sesiones en memoria | Un reinicio pierde historial y confirmaciones pendientes: el usuario que dijo "confirmo" después recibe un agente sin contexto. Además, no hay expiración: tras 200 sesiones, `/api/chat` responde 429 a sesiones nuevas hasta reiniciar. | Persistir sesiones con expiración (TTL) o limitar por IP; mientras tanto, reiniciar libera el cupo. |
+| Confirmación por regex solo en español | `esAfirmativo` reconoce una lista fija de afirmativos al inicio del mensaje y rechaza cualquier negación. Un "claro, procede" o un mensaje en inglés (salvo "yes" y "ok") no confirma; también hay falsos negativos como "sí, pero primero revisa". Falla del lado seguro: no crea la OC. | Botón de confirmación en el front que envíe una señal explícita al servidor en lugar de interpretar texto libre. |
+| Payload mal formado del modelo | Puede enviar un `payload` incompleto, con tipos errados o alterado. | Dos capas: zod rechaza la forma y el hash contra la OC reconstruida rechaza cualquier diferencia de contenido; en ambos casos se registra el intento en `control.csv` y el modelo recibe el error. Queda abierto que el modelo pierda iteraciones reintentando (tope `MAX_ITER`). |
+| Maestros estáticos | Proveedores, centros y aprobadores se leen de `fixtures/`. Un proveedor bloqueado o un aprobador que cambió de cargo en SAP no se detectaría. | Consultarlos en SAP en cada validación (`SapAdapter.consultarProveedor` ya existe; falta para centros y aprobadores) con caché corta. |
+| Costo y abuso del link público | El enlace no tiene autenticación ni límite por IP; el `sessionId` lo elige el cliente. Los topes por sesión (200.000 tokens, 25 pasos por turno) limitan una conversación, pero nada limita cuántas sesiones abre un mismo cliente hasta el tope global de 200; con esas sesiones puede gastar la clave del modelo y bloquear a los demás usuarios. | Autenticación o un token de acceso, límite de peticiones por IP, tope diario de gasto en la cuenta del proveedor, y la clave solo en variables de entorno del servidor (así está). |
+| Heurística de "Aprobado" | La detección por texto acepta variaciones como "desaprobado". | Aprobación estructurada (formulario o firma) en lugar de leer texto libre. |
+| Evidencia sin PDF | Solo hay `aprobacion.txt` con sha256 (P1 no hecho). | Generar el PDF y adjuntarlo a la OC. |
