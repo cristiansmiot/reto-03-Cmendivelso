@@ -64,4 +64,6 @@ bun run sync --check
 | `GET` | `/api/sessions/:id` | Identificador en la ruta. | Estado e historial visible de la sesión, incluido `needsConfirmation`; `404` si no existe. |
 | `GET` | `/api/health` | — | `{ ok, provider, model }`. |
 
-## Link de prueba: &lt;PENDIENTE&gt;
+## Link de prueba
+
+https://reto-03-cmendivelso-production.up.railway.app
