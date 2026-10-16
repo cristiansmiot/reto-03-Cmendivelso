@@ -61,7 +61,7 @@ TODO: documentar el bucle, sus límites y la confirmación humana aplicada por e
 
 **Por qué un modelo pequeño.** El modelo solo decide qué herramienta llamar y redacta; las reglas, el payload y el hash los calcula el código. No se comparó la calidad de varios modelos: la elección de `claude-haiku-5-5` es por defecto de costo/latencia y no está respaldada por un benchmark propio.
 
-**Costo por caso: no medido.** No incluyo tokens inventados. Al redactar esto no existía `out/llm.jsonl` (se limpia con `demo.ts`, que no usa modelo) ni había `ANTHROPIC_API_KEY` en el entorno, así que no hay cifras reales de sol-001 ni de sol-004 en dos turnos. Para obtenerlas:
+**Costo por caso (medido con el modelo real).** Tokens acumulados de cada sesión, tal como los entregan el proveedor y `GET /api/sessions/<id>` (campo `tokens`). Los valores los aportó el autor tras correr los casos con clave propia; no están guardados en el repositorio, porque `out/` se limpia y no está versionado. Para reproducirlos:
 
 1. Con clave en `.env`, ejecutar `bun run dev` y procesar sol-001 en una sesión nueva; luego sol-004 en otra (turno 1: procesar; turno 2: "confirmo").
 2. Leer `GET /api/sessions/<id>`: el campo `tokens` trae `{ entrada, salida }` acumulados de toda la sesión, incluido el paso final de texto.
@@ -69,14 +69,16 @@ TODO: documentar el bucle, sus límites y la confirmación humana aplicada por e
 
 | Caso | Tokens de entrada | Tokens de salida | Costo |
 |---|---|---|---|
-| sol-001 (sin confirmación, 1 turno) | [MEDIR] | [MEDIR] | [MEDIR] |
-| sol-004 (con confirmación, 2 turnos) | [MEDIR] | [MEDIR] | [MEDIR] |
+| sol-001 (sin confirmación, 1 turno) | 34.915 | 1.323 | ≈ USD 0,0042 |
+| sol-004 (con confirmación, 2 turnos) | 44.804 | 2.871 | ≈ USD 0,0059 |
 
 Fórmula: `costo (USD) = (tokens_entrada × 0,10 + tokens_salida × 0,50) / 1.000.000`.
 
 Precio verificado el 2026-10-16 en la página oficial de precios de Anthropic ([claude.com/pricing](https://claude.com/pricing), a la que redirige anthropic.com/pricing): Haiku 5.5, prompts de hasta 100K tokens, **USD 0,10 por millón de tokens de entrada y USD 0,50 por millón de salida**. Para prompts de más de 100K tokens la página lista USD 0,50 y 2,50. La página nombra el modelo "Haiku 5.5", no el id `claude-haiku-5-5`; asumo que son el mismo. El precio puede cambiar: revisar antes de usar la cifra.
 
-Orden de magnitud: el tope de sesión es de 200.000 tokens (`MAX_TOKENS_SESION`). Como el tope se comprueba antes de cada llamada al modelo, una sesión puede pasarse por un paso. Aun así, 200.000 tokens facturados todos como salida costarían USD 0,10, y todos como entrada USD 0,02. Es una cota del tope configurado, no una medición de sol-001 ni de sol-004: esas cifras siguen pendientes.
+Orden de magnitud: el tope de sesión es de 200.000 tokens (`MAX_TOKENS_SESION`). Como el tope se comprueba antes de cada llamada al modelo, una sesión puede pasarse por un paso. Aun así, 200.000 tokens facturados todos como salida costarían USD 0,10, y todos como entrada USD 0,02. Esa cota es del tope configurado; los costos de la tabla son los de los casos medidos.
+
+**Los costos de la tabla son una cota superior:** se calcularon con la fórmula sobre todos los tokens de entrada al precio completo y no descuentan lectura de caché de prompt (el adaptador marca el system prompt con `cache_control`, y las lecturas de caché se facturan más baratas que la entrada normal). Aun así, cada caso cuesta fracciones de centavo de dólar (menos de USD 0,01), lo que sostiene el argumento de costo frente a la tarea manual.
 
 **Topes de gasto implementados** (`src/agent/loop.ts`, `src/server.ts`): `MAX_ITER` = 25 pasos por turno, `MAX_TOKENS_SESION` = 200.000 por sesión, `MAX_TOKENS_RESPUESTA` = 2.048 por respuesta, `LLM_TIMEOUT_MS` = 60.000 y 200 sesiones simultáneas. Todos son configurables por variable de entorno salvo el límite de sesiones, que es una constante.
 
