@@ -1,0 +1,20 @@
+{
+  "name": "reto-03",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "bun check"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  }
+}
