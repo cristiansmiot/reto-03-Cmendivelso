@@ -33,6 +33,7 @@ export const OrdenCompraSchema = z.object({
       codigo: z.string(),
       detalle: z.string(),
       confirmado_por: z.string().nullable(),
+      confirmado_ts: z.string().nullable().optional(),
     }),
   ),
 })

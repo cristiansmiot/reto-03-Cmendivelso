@@ -3,7 +3,7 @@ import { ErrorNegocio } from "../lib/error.ts"
 import { registrarLlamada, registrarUso } from "../lib/log.ts"
 import { mensajeDeError } from "../lib/result.ts"
 import type { LlamadaHerramienta, LlmAdapter, RespuestaLlm, Uso } from "../llm/adapter.ts"
-import { casosConfirmados, forzarConfirmacion } from "./confirmacion.ts"
+import { casosConfirmados, claveCaso, forzarConfirmacion } from "./confirmacion.ts"
 import { definiciones } from "./herramientas.ts"
 import type { Registro } from "./herramientas.ts"
 import type { LlamadaRegistrada, Sesion } from "./sesion.ts"
@@ -30,8 +30,8 @@ type Turno = {
   sesion: Sesion
   confirmados: string[]
   llamadas: LlamadaRegistrada[]
-  /** Último estado de confirmación por caso en este turno: gana la llamada más reciente. */
-  pendientes: Map<string, boolean>
+  /** Casos que en este turno quedaron esperando confirmación. */
+  pendientes: Set<string>
 }
 
 type Ejecucion = { contenido: string; ok: boolean; requiere: boolean; summary: string; args: Record<string, unknown> }
@@ -100,11 +100,19 @@ async function ejecutarLlamadas(deps: Dependencias, turno: Turno, r: RespuestaLl
   turno.sesion.mensajes.push({ rol: "herramienta", resultados })
 }
 
+/** Marca el caso al pedir confirmación; solo una creación confirmada con éxito lo libera (otras llamadas no lo tocan). */
+function actualizarPendientes(pendientes: Set<string>, args: Record<string, unknown>, e: Ejecucion): void {
+  if (typeof args.caso !== "string") return
+  const clave = claveCaso(args.caso)
+  if (e.requiere) pendientes.add(clave)
+  else if (e.ok && args.confirmado === true) pendientes.delete(clave)
+}
+
 function registrarEjecucion(deps: Dependencias, turno: Turno, llamada: LlamadaHerramienta, e: Ejecucion, uso: Uso): void {
   const { ok, summary, args } = e
   turno.llamadas.push({ name: llamada.nombre, args, ok, summary, uso })
   turno.sesion.llamadas.push({ name: llamada.nombre, args, ok, summary, uso })
-  if (typeof args.caso === "string") turno.pendientes.set(args.caso, e.requiere)
+  actualizarPendientes(turno.pendientes, args, e)
   void registrarUso(deps.directory, { sessionId: turno.sesion.id, herramienta: llamada.nombre, ok, ...uso })
 }
 
@@ -150,11 +158,10 @@ async function iterar(deps: Dependencias, turno: Turno): Promise<string> {
 
 /** Un turno: mensaje del usuario → (modelo → herramientas)* → respuesta. Nunca lanza por fallos del modelo. */
 export async function ejecutarTurno(deps: Dependencias, sesion: Sesion, mensaje: string): Promise<ResultadoTurno> {
-  const turno: Turno = { sesion, confirmados: casosConfirmados(sesion, mensaje), llamadas: [], pendientes: new Map() }
-  sesion.pendiente = null
+  const turno: Turno = { sesion, confirmados: casosConfirmados(sesion, mensaje), llamadas: [], pendientes: new Set(casosConfirmados(sesion, mensaje)) }
   sesion.mensajes.push({ rol: "usuario", texto: mensaje })
   const reply = await iterar(deps, turno)
-  const casos = [...turno.pendientes].filter(([, pide]) => pide).map(([caso]) => caso)
+  const casos = [...turno.pendientes]
   sesion.pendiente = casos.length > 0 ? { casos } : null
   const toolCalls = turno.llamadas.map(({ name, args, ok, summary }) => ({ name, args, ok, summary }))
   return { reply, toolCalls, needsConfirmation: sesion.pendiente !== null }

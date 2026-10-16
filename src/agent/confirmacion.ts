@@ -9,6 +9,11 @@ export function esAfirmativo(texto: string): boolean {
   return AFIRMATIVO.test(texto) && !NEGACION.test(texto)
 }
 
+/** Clave estable del caso: el nombre de la carpeta, aunque el modelo envíe una ruta o mayúsculas. */
+export function claveCaso(caso: string): string {
+  return caso.trim().replace(/\\/g, "/").split("/").filter(Boolean).at(-1)?.toLowerCase() ?? ""
+}
+
 /** Casos cuya confirmación vale en este turno: solo si había una pendiente y el usuario acaba de afirmar. */
 export function casosConfirmados(sesion: Sesion, mensaje: string): string[] {
   return sesion.pendiente && esAfirmativo(mensaje) ? sesion.pendiente.casos : []
@@ -21,6 +26,6 @@ export function forzarConfirmacion(
   confirmados: string[],
 ): Record<string, unknown> {
   if (!admiteConfirmado) return args
-  const caso = typeof args.caso === "string" ? args.caso : ""
+  const caso = typeof args.caso === "string" ? claveCaso(args.caso) : ""
   return { ...args, confirmado: confirmados.includes(caso) }
 }

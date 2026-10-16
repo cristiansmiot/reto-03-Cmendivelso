@@ -112,15 +112,16 @@ function compuerta(ev: Evaluacion, confirmado: boolean): Compuerta | null {
 
 /** Hash del payload sin los confirmantes: lo único que cambia entre construir y crear. */
 function huella(orden: OrdenCompra): string {
-  const excepciones = orden.excepciones.map((e) => ({ ...e, confirmado_por: null }))
+  const excepciones = orden.excepciones.map((e) => ({ ...e, confirmado_por: null, confirmado_ts: null }))
   return sha256(jsonCanonico({ ...orden, excepciones }))
 }
 
-async function enviarASap(orden: OrdenCompra, confirmadoPor: string, directory: string) {
+async function enviarASap(orden: OrdenCompra, sessionId: string, directory: string) {
   const sap = new SapMock(directory)
   const previa = await sap.buscarOrdenPorReferencia(orden.referencia.solicitud_id)
   if (previa) return { numero_oc: previa.numero_oc, fecha: null, idempotente: true }
-  const excepciones = orden.excepciones.map((e) => ({ ...e, confirmado_por: confirmadoPor }))
+  const ts = new Date().toISOString()
+  const excepciones = orden.excepciones.map((e) => ({ ...e, confirmado_por: `analista (sesión ${sessionId})`, confirmado_ts: ts }))
   const creada = await sap.crearOrden({ ...orden, excepciones })
   return { ...creada, idempotente: false }
 }

@@ -1,5 +1,10 @@
-import { readFile, rm } from "node:fs/promises"
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
+import { registrar } from "./src/agent/herramientas.ts"
+import { ejecutarTurno } from "./src/agent/loop.ts"
+import { nuevaSesion } from "./src/agent/sesion.ts"
+import type { LlamadaHerramienta, LlmAdapter, Mensaje, RespuestaLlm } from "./src/llm/adapter.ts"
 import type { Evaluacion } from "./src/rules/rc.ts"
 import type { OrdenCompra } from "./src/sap/adapter.ts"
 import * as oc from "./src/tools/oc.ts"
@@ -81,6 +86,54 @@ async function confirmarSol004(orden: OrdenCompra | undefined, agregar: Agregar)
   agregar("crear con confirmado:true", "creada 4500000002", await describirCreacion(confirmada))
 }
 
+const SIN_USO = { entrada: 0, salida: 0 }
+const llamada = (nombre: string, argumentos: Record<string, unknown>): LlamadaHerramienta => ({ id: `${nombre}-${Math.random()}`, nombre, argumentos })
+const respuesta = (texto: string, llamadas: LlamadaHerramienta[] = []): RespuestaLlm => ({ texto, llamadas, motivo: llamadas.length ? "herramientas" : "fin", uso: SIN_USO })
+
+function ordenConstruida(mensajes: Mensaje[]): unknown {
+  for (const m of mensajes.toReversed()) {
+    if (m.rol !== "herramienta") continue
+    const r = m.resultados.find((x) => x.nombre === "oc_construir_payload")
+    if (r) return (JSON.parse(r.contenido) as { data: { orden: unknown } }).data.orden
+  }
+  return undefined
+}
+
+/** Modelo falso que reproduce el bug: el turno 1 nunca llama oc_crear; el turno 2 la llama con confirmado:true. */
+function modeloFalso(): LlmAdapter {
+  const caso = "sol-004"
+  const guion = [
+    () => respuesta("", [llamada("oc_leer_paquete", { caso })]),
+    () => respuesta("", [llamada("oc_validar", { caso })]),
+    () => respuesta("", [llamada("oc_construir_payload", { caso })]),
+    () => respuesta("", [llamada("oc_generar_evidencia", { caso })]),
+    () => respuesta("Requiere confirmación (RC5). ¿Confirmas?"),
+    (m: Mensaje[]) => respuesta("", [llamada("oc_crear", { caso, payload: ordenConstruida(m), confirmado: true })]),
+    () => respuesta("OC creada."),
+  ]
+  let paso = 0
+  return { proveedor: "falso", modelo: "guion", enviar: async (mensajes) => guion[paso++]?.(mensajes) ?? respuesta("fin") }
+}
+
+/** Regresión PRD §11: confirmar en el turno 2 debe crear la OC aunque el turno 1 terminara con oc_generar_evidencia. */
+async function regresionConfirmacion(filas: Fila[]): Promise<void> {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "reto03-"))
+  try {
+    await cp(path.join(directory, "fixtures"), path.join(tmp, "fixtures"), { recursive: true })
+    const config = { maxIter: 10, maxTokensSesion: 100000, maxTokensRespuesta: 1000, timeoutMs: 5000 }
+    const deps = { llm: modeloFalso(), herramientas: registrar("oc", oc), sistema: "", directory: tmp, config }
+    const sesion = nuevaSesion("regresion")
+    const t1 = await ejecutarTurno(deps, sesion, "Procesa sol-004 y no la crees hasta que confirme")
+    const t2 = await ejecutarTurno(deps, sesion, "confirmo")
+    const crear2 = t2.toolCalls.find((c) => c.name === "oc_crear")
+    const obtenido = `t1: pide=${t1.needsConfirmation} crear=${t1.toolCalls.some((c) => c.name === "oc_crear")}; t2: crear ok=${crear2?.ok ?? "no llamada"} pendiente=${t2.needsConfirmation}`
+    const esperado = "t1: pide=true crear=false; t2: crear ok=true pendiente=false"
+    filas.push({ caso: "sol-004", escenario: "regresión confirmación 2 turnos", esperado, obtenido })
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+}
+
 function imprimirTabla(filas: Fila[]): void {
   const ancho = (clave: keyof Fila) => Math.max(...filas.map((f) => f[clave].length))
   const col = (texto: string, n: number) => texto.padEnd(n)
@@ -95,6 +148,7 @@ async function main(): Promise<void> {
   await rm(path.join(directory, "out"), { recursive: true, force: true })
   const filas: Fila[] = []
   for (const caso of Object.keys(ESPERADO_VALIDACION)) await procesar(caso, filas)
+  await regresionConfirmacion(filas)
   imprimirTabla(filas)
   const fallidas = filas.filter((f) => f.esperado !== f.obtenido).length
   console.log(`\n${filas.length - fallidas}/${filas.length} verificaciones correctas`)
