@@ -72,7 +72,11 @@ TODO: documentar el bucle, sus límites y la confirmación humana aplicada por e
 | sol-001 (sin confirmación, 1 turno) | [MEDIR] | [MEDIR] | [MEDIR] |
 | sol-004 (con confirmación, 2 turnos) | [MEDIR] | [MEDIR] | [MEDIR] |
 
-Fórmula: `costo = tokens_entrada × precio_entrada_por_millón / 1.000.000 + tokens_salida × precio_salida_por_millón / 1.000.000`, con `precio_entrada_por_millón = [PRECIO_VERIFICAR]` y `precio_salida_por_millón = [PRECIO_VERIFICAR]` para el modelo configurado. Ver la tarifa vigente del modelo en la página de precios del proveedor.
+Fórmula: `costo (USD) = (tokens_entrada × 0,10 + tokens_salida × 0,50) / 1.000.000`.
+
+Precio verificado el 2026-10-16 en la página oficial de precios de Anthropic ([claude.com/pricing](https://claude.com/pricing), a la que redirige anthropic.com/pricing): Haiku 5.5, prompts de hasta 100K tokens, **USD 0,10 por millón de tokens de entrada y USD 0,50 por millón de salida**. Para prompts de más de 100K tokens la página lista USD 0,50 y 2,50. La página nombra el modelo "Haiku 5.5", no el id `claude-haiku-5-5`; asumo que son el mismo. El precio puede cambiar: revisar antes de usar la cifra.
+
+Orden de magnitud: el tope de sesión es de 200.000 tokens (`MAX_TOKENS_SESION`). Como el tope se comprueba antes de cada llamada al modelo, una sesión puede pasarse por un paso. Aun así, 200.000 tokens facturados todos como salida costarían USD 0,10, y todos como entrada USD 0,02. Es una cota del tope configurado, no una medición de sol-001 ni de sol-004: esas cifras siguen pendientes.
 
 **Topes de gasto implementados** (`src/agent/loop.ts`, `src/server.ts`): `MAX_ITER` = 25 pasos por turno, `MAX_TOKENS_SESION` = 200.000 por sesión, `MAX_TOKENS_RESPUESTA` = 2.048 por respuesta, `LLM_TIMEOUT_MS` = 60.000 y 200 sesiones simultáneas. Todos son configurables por variable de entorno salvo el límite de sesiones, que es una constante.
 
@@ -166,7 +170,7 @@ Tomados del PRD §10:
 - El correo de aprobación es evidencia suficiente. Auditoría podría exigir firma digital.
 
 Adoptados al interpretar el PRD y el código:
-- **Aprobación literal.** Se considera aprobada si el cuerpo contiene "aprobado" (sin distinguir mayúsculas) y no contiene "no aprobado" (`src/tools/paquete.ts`). Es una heurística de texto: no distingue "desaprobado" de "aprobado" y no entiende frases más complejas.
+- **Aprobación literal.** Se considera aprobada si el cuerpo contiene "aprobado" como palabra completa (sin distinguir mayúsculas) y no contiene "no aprobado", "desaprobado" ni "rechazado" (`esAprobado` en `src/tools/paquete.ts`, con casos en `demo.ts`). Sigue siendo una heurística de texto: no entiende frases como "aprobado si baja el precio" ni un "aprobado" citado de un correo anterior.
 - **RC10**: tolerancia de ±1 unidad monetaria (`|cantidad × valor_unitario − valor_total| ≤ 1`), como pide el PRD §7.3. **RC5**: tolerancia de 2 % sobre el valor de la solicitud.
 - **Clave del caso** = nombre de la carpeta en `fixtures/reto-03/solicitudes/` (p. ej. `sol-004`). El servidor la normaliza a minúsculas y toma el último segmento si el modelo envía una ruta.
 - **Un caso, una OC.** La idempotencia es por `solicitud_id`: una segunda creación devuelve el número existente aunque el payload cambie.
@@ -196,7 +200,23 @@ Bonus: `modulo/` (agente, skill y herramientas) se genera con `bun run sync`; `b
 
 ## 11. Uso de IA
 
-TODO: declarar asistentes, tareas realizadas, propuestas descartadas y motivos.
+| Asistente | Para qué lo usé |
+|---|---|
+| Claude (chat, Opus) | Elegir el reto, definir la arquitectura y las decisiones de diseño (confirmación en servidor, reconstrucción del payload, RC como funciones puras), redactar CLAUDE.md/AGENTS.md, agent/prompt.md y src/knowledge/, planificar el trabajo en paralelo y el despliegue, y diagnosticar fallos durante las pruebas. |
+| Claude Code (VS Code, Opus en plan / Sonnet en implementación) | Leer los fixtures y producir docs/FIXTURES.md; implementar herramientas, reglas RC, SAP mock, demo.ts, adaptador LLM, ciclo del agente y servidor; corregir bugs (entre ellos el del flujo de confirmación y la detección de "Aprobado"); redactar en SOLUCION.md las secciones 4, 8, 9, 10 y 12 a partir del código y de docs/PRD.md, que luego revisé. |
+| Codex (VS Code) | Front web/index.html, scripts/sync-modulo.ts, README.md y el borrador de SOLUCION.md (§2, §6, §7). |
+
+**Cómo los coordiné:** un CLAUDE.md/AGENTS.md con el contrato y las reglas no negociables, que ambos asistentes leen; propiedad de archivos separada (Claude Code: src/, demo.ts; Codex: web/, scripts/, docs), para evitar conflictos; `/clear` entre fases y `demo.ts` como verificación en lugar de conversación, para ahorrar tokens.
+
+**Qué descarté o corregí de lo que propusieron:**
+- La primera versión de la confirmación se probó solo con un modelo falso, que llamaba `oc_crear` en el primer turno. Con el modelo real (que primero pregunta y crea en el segundo turno), el servidor no reconocía el "confirmo". Lo detecté en la prueba de punta a punta y pedí corregirlo, con un test de regresión en `demo.ts` que simula exactamente esos dos turnos a través del ciclo del agente. Lección: un mock que no reproduce el comportamiento real da falsa confianza.
+- El modelo inventó una causa técnica al fallar (`confirmado_por: null`). Ajusté el prompt para que cite el error de la herramienta en vez de especular.
+- El modelo le pasaba a `oc_crear` el objeto equivocado; la validación zod lo atrapó y el modelo reintentó. Aun así, precisé el prompt para evitar el reintento.
+- Errores crudos del SDK (JSON) llegaban al chat; pedí traducirlos a mensajes legibles (HU-6, CA5).
+- Al revisar la sección de supuestos detecté que "desaprobado" se leía como aprobado; pedí corregir la detección y documentarla.
+- Rechacé agregar dependencias, base de datos o un framework de front: no aportaban a los criterios del reto (por eso tampoco está `pdf-lib`, ver §10).
+
+**Qué hice yo:** elegir el reto y el enfoque, revisar cada entrega, probar los 6 casos con el modelo real en local y en Railway, configurar GitHub y Railway, y decidir qué correcciones aplicar. Puedo explicar cada componente y cada decisión de este documento.
 
 ## 12. Riesgos
 
@@ -208,5 +228,5 @@ TODO: declarar asistentes, tareas realizadas, propuestas descartadas y motivos.
 | Payload mal formado del modelo | Puede enviar un `payload` incompleto, con tipos errados o alterado. | Dos capas: zod rechaza la forma y el hash contra la OC reconstruida rechaza cualquier diferencia de contenido; en ambos casos se registra el intento en `control.csv` y el modelo recibe el error. Queda abierto que el modelo pierda iteraciones reintentando (tope `MAX_ITER`). |
 | Maestros estáticos | Proveedores, centros y aprobadores se leen de `fixtures/`. Un proveedor bloqueado o un aprobador que cambió de cargo en SAP no se detectaría. | Consultarlos en SAP en cada validación (`SapAdapter.consultarProveedor` ya existe; falta para centros y aprobadores) con caché corta. |
 | Costo y abuso del link público | El enlace no tiene autenticación ni límite por IP; el `sessionId` lo elige el cliente. Los topes por sesión (200.000 tokens, 25 pasos por turno) limitan una conversación, pero nada limita cuántas sesiones abre un mismo cliente hasta el tope global de 200; con esas sesiones puede gastar la clave del modelo y bloquear a los demás usuarios. | Autenticación o un token de acceso, límite de peticiones por IP, tope diario de gasto en la cuenta del proveedor, y la clave solo en variables de entorno del servidor (así está). |
-| Heurística de "Aprobado" | La detección por texto acepta variaciones como "desaprobado". | Aprobación estructurada (formulario o firma) en lugar de leer texto libre. |
+| Heurística de "Aprobado" | La detección es por texto: palabra completa "aprobado", anulada por "no aprobado", "desaprobado" o "rechazado". Sigue aceptando aprobaciones condicionales ("aprobado si baja el precio") y rechaza correos que mezclen "aprobado" y "rechazado" aunque el sentido sea otro. | Aprobación estructurada (formulario o firma) en lugar de leer texto libre. |
 | Evidencia sin PDF | Solo hay `aprobacion.txt` con sha256 (P1 no hecho). | Generar el PDF y adjuntarlo a la OC. |

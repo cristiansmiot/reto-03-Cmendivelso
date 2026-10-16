@@ -59,9 +59,14 @@ export function parsearFactura(texto: string): Factura {
   return { numero, fecha, total: parsearMonto(total, "la factura") }
 }
 
+/** RC2: "Aprobado" como palabra completa; "no aprobado", "desaprobado" y "rechazado" lo anulan. */
+export function esAprobado(cuerpo: string): boolean {
+  return /\baprobado\b/i.test(cuerpo) && !/\b(no\s+aprobado|desaprobado|rechazado)\b/i.test(cuerpo)
+}
+
 function parsearAprobacion(json: unknown): Aprobacion {
   const a = AprobacionSchema.parse(json)
-  const aprobado = /aprobado/i.test(a.cuerpo) && !/\bno\s+aprobado/i.test(a.cuerpo)
+  const aprobado = esAprobado(a.cuerpo)
   return { de: a.de.toLowerCase(), para: a.para, asunto: a.asunto, fecha: a.fecha, aprobado, texto: a.cuerpo }
 }
 

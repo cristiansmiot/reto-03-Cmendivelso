@@ -8,6 +8,7 @@ import type { LlamadaHerramienta, LlmAdapter, Mensaje, RespuestaLlm } from "./sr
 import type { Evaluacion } from "./src/rules/rc.ts"
 import type { OrdenCompra } from "./src/sap/adapter.ts"
 import * as oc from "./src/tools/oc.ts"
+import { esAprobado } from "./src/tools/paquete.ts"
 
 const directory = import.meta.dir
 const ctx = { directory, sessionId: "demo" }
@@ -134,6 +135,22 @@ async function regresionConfirmacion(filas: Fila[]): Promise<void> {
   }
 }
 
+/** RC2: "Aprobado" palabra completa; desaprobado, no aprobado y rechazado no cuentan. */
+function deteccionAprobado(filas: Fila[]): void {
+  const casos: [string, boolean][] = [
+    ["Aprobado, proceder con la orden.", true],
+    ["APROBADO.", true],
+    ["Desaprobado por presupuesto.", false],
+    ["No aprobado todavía.", false],
+    ["Rechazado, falta cotización.", false],
+    ["Sin comentarios.", false],
+  ]
+  for (const [cuerpo, esperado] of casos) {
+    const obtenido = esAprobado(cuerpo)
+    filas.push({ caso: "RC2", escenario: `aprobado: "${cuerpo}"`, esperado: String(esperado), obtenido: String(obtenido) })
+  }
+}
+
 function imprimirTabla(filas: Fila[]): void {
   const ancho = (clave: keyof Fila) => Math.max(...filas.map((f) => f[clave].length))
   const col = (texto: string, n: number) => texto.padEnd(n)
@@ -148,6 +165,7 @@ async function main(): Promise<void> {
   await rm(path.join(directory, "out"), { recursive: true, force: true })
   const filas: Fila[] = []
   for (const caso of Object.keys(ESPERADO_VALIDACION)) await procesar(caso, filas)
+  deteccionAprobado(filas)
   await regresionConfirmacion(filas)
   imprimirTabla(filas)
   const fallidas = filas.filter((f) => f.esperado !== f.obtenido).length
