@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Agente OC SAP</title>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --fondo: #f4f6f8;
+      --panel: #ffffff;
+      --panel-secundario: #f8fafc;
+      --texto: #17202a;
+      --suave: #607080;
+      --borde: #d9e0e7;
+      --acento: #1769aa;
+      --acento-hover: #0f568d;
+      --usuario: #e6f1fb;
+      --exito: #198754;
+      --error: #c93737;
+      --ambar: #fff4d6;
+      --ambar-borde: #d59a16;
+      --sombra: 0 8px 28px rgb(23 32 42 / 8%);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --fondo: #11161c;
+        --panel: #192129;
+        --panel-secundario: #212b35;
+        --texto: #e8edf2;
+        --suave: #aab5c0;
+        --borde: #34414e;
+        --acento: #62aee8;
+        --acento-hover: #86c3ef;
+        --usuario: #183b57;
+        --exito: #53c991;
+        --error: #ff7b7b;
+        --ambar: #493813;
+        --ambar-borde: #d8a52d;
+        --sombra: 0 8px 28px rgb(0 0 0 / 25%);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      background: var(--fondo);
+      color: var(--texto);
+      font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, textarea { font: inherit; }
+
+    button { cursor: pointer; }
+
+    button:disabled { cursor: not-allowed; opacity: .58; }
+
+    .app {
+      width: min(960px, 100%);
+      min-height: 100%;
+      margin: 0 auto;
+      background: var(--panel);
+      box-shadow: var(--sombra);
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      min-height: 68px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--borde);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .marca { min-width: 0; }
+
+    h1 {
+      margin: 0;
+      font-size: 1.12rem;
+      letter-spacing: -.01em;
+    }
+
+    .estado {
+      margin-top: 2px;
+      color: var(--suave);
+      font-size: .8rem;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .estado-texto {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .punto {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--error);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 18%, transparent);
+    }
+
+    .punto.ok {
+      background: var(--exito);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--exito) 18%, transparent);
+    }
+
+    .secundario, .ejemplo, .cancelar, .confirmar, .enviar {
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: var(--panel);
+      color: var(--texto);
+    }
+
+    .secundario { white-space: nowrap; }
+
+    .secundario:hover, .ejemplo:hover, .cancelar:hover { background: var(--panel-secundario); }
+
+    main {
+      flex: 1;
+      padding: 22px clamp(14px, 4vw, 40px) 28px;
+      overflow-y: auto;
+    }
+
+    .bienvenida {
+      max-width: 650px;
+      margin: 7vh auto 0;
+      text-align: center;
+    }
+
+    .bienvenida h2 { margin-bottom: 6px; font-size: 1.35rem; }
+
+    .bienvenida p { margin: 0 0 22px; color: var(--suave); }
+
+    .ejemplos { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; }
+
+    .ejemplo { color: var(--acento); text-align: left; }
+
+    .mensaje {
+      width: fit-content;
+      max-width: min(760px, 88%);
+      margin: 0 0 18px;
+      padding: 11px 14px;
+      border: 1px solid var(--borde);
+      border-radius: 4px 14px 14px 14px;
+      background: var(--panel-secundario);
+      overflow-wrap: anywhere;
+    }
+
+    .mensaje.usuario {
+      margin-left: auto;
+      border-color: transparent;
+      border-radius: 14px 4px 14px 14px;
+      background: var(--usuario);
+    }
+
+    .mensaje.error { border-left: 4px solid var(--error); }
+
+    .mensaje > :first-child { margin-top: 0; }
+    .mensaje > :last-child { margin-bottom: 0; }
+    .mensaje p { margin: .45em 0; }
+    .mensaje ul, .mensaje ol { padding-left: 1.4rem; }
+    .mensaje pre { overflow-x: auto; padding: 10px; border-radius: 7px; background: var(--fondo); }
+    .mensaje code { font: .9em ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .mensaje a { color: var(--acento); }
+
+    .mensaje table {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+      border-collapse: collapse;
+      font-size: .92em;
+    }
+
+    .mensaje th, .mensaje td { padding: 7px 10px; border: 1px solid var(--borde); text-align: left; }
+    .mensaje th { background: var(--fondo); }
+
+    .herramientas {
+      max-width: min(760px, 94%);
+      margin: -9px 0 18px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .tool-card {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .tool-card.error { border-color: color-mix(in srgb, var(--error) 45%, var(--borde)); }
+
+    .tool-card summary {
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .tool-card summary::-webkit-details-marker { display: none; }
+    .tool-card summary::before { content: "›"; color: var(--suave); font-size: 1.25rem; transition: transform .15s; }
+    .tool-card[open] summary::before { transform: rotate(90deg); }
+    .tool-name { font: 600 .87rem ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .tool-summary { flex: 1; color: var(--suave); font-size: .85rem; overflow-wrap: anywhere; }
+    .badge { flex: 0 0 auto; font-size: .78rem; font-weight: 700; }
+    .badge.ok { color: var(--exito); }
+    .badge.error { color: var(--error); }
+    .tool-body { padding: 0 12px 12px 34px; }
+    .tool-body strong { display: block; margin-bottom: 5px; font-size: .78rem; color: var(--suave); }
+    .tool-body pre { margin: 0; padding: 10px; overflow-x: auto; border-radius: 7px; background: var(--fondo); font: .78rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    .pensando {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--suave);
+    }
+
+    .pensando span:not(.texto) {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulso 1.1s infinite ease-in-out;
+    }
+
+    .pensando span:nth-child(3) { animation-delay: .15s; }
+    .pensando span:nth-child(4) { animation-delay: .3s; }
+    @keyframes pulso { 0%, 70%, 100% { opacity: .28; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-3px); } }
+
+    .zona-inferior {
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+      border-top: 1px solid var(--borde);
+      background: var(--panel);
+    }
+
+    .confirmacion {
+      padding: 11px clamp(14px, 4vw, 40px);
+      border-bottom: 1px solid var(--ambar-borde);
+      background: var(--ambar);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .confirmacion[hidden] { display: none; }
+    .confirmacion p { margin: 0; font-weight: 600; }
+    .acciones { display: flex; gap: 8px; }
+    .confirmar, .enviar { border-color: var(--acento); background: var(--acento); color: #fff; font-weight: 650; }
+    .confirmar:hover, .enviar:hover { background: var(--acento-hover); }
+
+    form {
+      padding: 14px clamp(14px, 4vw, 40px) 16px;
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 44px;
+      max-height: 150px;
+      resize: none;
+      padding: 10px 12px;
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      outline: none;
+      background: var(--panel);
+      color: var(--texto);
+    }
+
+    textarea:focus { border-color: var(--acento); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acento) 16%, transparent); }
+    .enviar { min-height: 44px; }
+
+    @media (max-width: 520px) {
+      header { padding: 10px 12px; }
+      .secundario { padding: 7px 9px; }
+      main { padding-top: 14px; }
+      .mensaje { max-width: 94%; }
+      .confirmacion { align-items: stretch; flex-direction: column; gap: 8px; }
+      .acciones button { flex: 1; }
+      form { align-items: stretch; flex-direction: column; }
+      .enviar { width: 100%; }
+      .tool-card summary { align-items: flex-start; flex-wrap: wrap; }
+      .tool-summary { flex-basis: 70%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="marca">
+        <h1>Agente OC SAP</h1>
+        <div class="estado" role="status">
+          <span id="status-dot" class="punto" aria-hidden="true"></span>
+          <span id="status-text" class="estado-texto">Comprobando servicio…</span>
+        </div>
+      </div>
+      <button id="new-session" class="secundario" type="button">Nueva sesión</button>
+    </header>
+
+    <main id="chat" aria-live="polite" aria-label="Historial de conversación">
+      <section id="welcome" class="bienvenida">
+        <h2>¿Qué orden de compra procesamos?</h2>
+        <p>Puedo validar solicitudes, mostrar hallazgos y crear la orden cuando corresponda.</p>
+        <div class="ejemplos" aria-label="Mensajes de ejemplo">
+          <button class="ejemplo" type="button">Procesa sol-001</button>
+          <button class="ejemplo" type="button">Procesa sol-004 y no la crees hasta que confirme</button>
+          <button class="ejemplo" type="button">Procesa sol-002</button>
+        </div>
+      </section>
+    </main>
+
+    <div class="zona-inferior">
+      <aside id="confirmation" class="confirmacion" hidden aria-live="assertive">
+        <p>Esta acción necesita tu confirmación para continuar.</p>
+        <div class="acciones">
+          <button id="cancel" class="cancelar" type="button">Cancelar</button>
+          <button id="confirm" class="confirmar" type="button">Confirmar</button>
+        </div>
+      </aside>
+      <form id="chat-form">
+        <textarea id="message" rows="1" placeholder="Escribe un mensaje…" aria-label="Mensaje" required></textarea>
+        <button id="send" class="enviar" type="submit">Enviar</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const chat = document.querySelector("#chat");
+      const welcome = document.querySelector("#welcome");
+      const form = document.querySelector("#chat-form");
+      const input = document.querySelector("#message");
+      const sendButton = document.querySelector("#send");
+      const confirmation = document.querySelector("#confirmation");
+      const statusDot = document.querySelector("#status-dot");
+      const statusText = document.querySelector("#status-text");
+      let waiting = false;
+      let sessionId = getSessionId();
+
+      function getSessionId() {
+        try {
+          const saved = localStorage.getItem("ocSapSessionId");
+          if (saved) return saved;
+          const created = crypto.randomUUID();
+          localStorage.setItem("ocSapSessionId", created);
+          return created;
+        } catch (_) {
+          return crypto.randomUUID();
+        }
+      }
+
+      function resetSession() {
+        sessionId = crypto.randomUUID();
+        try { localStorage.setItem("ocSapSessionId", sessionId); } catch (_) { /* memoria no disponible */ }
+        chat.replaceChildren(welcome);
+        confirmation.hidden = true;
+        input.value = "";
+        resizeInput();
+        input.focus();
+      }
+
+      function text(value) {
+        return value == null ? "" : String(value);
+      }
+
+      function safeMarkdown(markdown) {
+        if (!window.marked) {
+          const fallback = document.createElement("p");
+          fallback.textContent = text(markdown);
+          return fallback;
+        }
+        const template = document.createElement("template");
+        template.innerHTML = window.marked.parse(text(markdown), { breaks: true, gfm: true });
+        const allowed = new Set(["P", "BR", "STRONG", "EM", "DEL", "CODE", "PRE", "UL", "OL", "LI", "BLOCKQUOTE", "A", "H1", "H2", "H3", "H4", "H5", "H6", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "HR"]);
+        template.content.querySelectorAll("*").forEach((element) => {
+          if (!allowed.has(element.tagName)) {
+            element.replaceWith(...element.childNodes);
+            return;
+          }
+          [...element.attributes].forEach((attribute) => element.removeAttribute(attribute.name));
+          if (element.tagName === "A") {
+            const rawHref = element.getAttribute("data-safe-href") || "";
+            if (/^(https?:|mailto:)/i.test(rawHref)) element.href = rawHref;
+          }
+        });
+        return template.content;
+      }
+
+      function markdownFragment(markdown) {
+        if (!window.marked) return safeMarkdown(markdown);
+        const source = text(markdown);
+        const renderer = new window.marked.Renderer();
+        renderer.link = ({ href, title, tokens }) => {
+          const label = window.marked.Parser.parseInline(tokens);
+          const safeHref = /^(https?:|mailto:)/i.test(href || "") ? href : "";
+          const safeTitle = title ? ` title="${escapeAttribute(title)}"` : "";
+          return `<a data-safe-href="${escapeAttribute(safeHref)}"${safeTitle}>${label}</a>`;
+        };
+        const template = document.createElement("template");
+        template.innerHTML = window.marked.parse(source, { breaks: true, gfm: true, renderer });
+        const allowed = new Set(["P", "BR", "STRONG", "EM", "DEL", "CODE", "PRE", "UL", "OL", "LI", "BLOCKQUOTE", "A", "H1", "H2", "H3", "H4", "H5", "H6", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "HR"]);
+        template.content.querySelectorAll("*").forEach((element) => {
+          if (!allowed.has(element.tagName)) {
+            element.replaceWith(...element.childNodes);
+            return;
+          }
+          [...element.attributes].forEach((attribute) => {
+            if (!(element.tagName === "A" && attribute.name === "data-safe-href")) element.removeAttribute(attribute.name);
+          });
+          if (element.tagName === "A") {
+            const candidate = element.getAttribute("data-safe-href") || "";
+            const href = /^(https?:|mailto:)/i.test(candidate) ? candidate : "";
+            element.removeAttribute("data-safe-href");
+            if (href) {
+              element.href = href;
+              element.target = "_blank";
+              element.rel = "noopener noreferrer";
+            }
+          }
+        });
+        return template.content;
+      }
+
+      function escapeAttribute(value) {
+        return text(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      }
+
+      function addMessage(content, role, isError = false) {
+        welcome.remove();
+        const article = document.createElement("article");
+        article.className = `mensaje ${role}${isError ? " error" : ""}`;
+        if (role === "usuario") article.textContent = text(content);
+        else article.append(markdownFragment(content));
+        chat.append(article);
+        scrollBottom();
+        return article;
+      }
+
+      function addToolCalls(calls) {
+        if (!Array.isArray(calls) || calls.length === 0) return;
+        const container = document.createElement("section");
+        container.className = "herramientas";
+        container.setAttribute("aria-label", "Llamadas a herramientas");
+        calls.forEach((call) => container.append(toolCard(call)));
+        chat.append(container);
+        scrollBottom();
+      }
+
+      function toolCard(call) {
+        const card = document.createElement("details");
+        const ok = call?.ok === true;
+        card.className = `tool-card${ok ? "" : " error"}`;
+        const heading = document.createElement("summary");
+        const name = document.createElement("span");
+        name.className = "tool-name";
+        name.textContent = text(call?.name) || "herramienta";
+        const summary = document.createElement("span");
+        summary.className = "tool-summary";
+        summary.textContent = text(call?.summary) || "Sin resumen";
+        const badge = document.createElement("span");
+        badge.className = `badge ${ok ? "ok" : "error"}`;
+        badge.textContent = ok ? "✅ ok" : "⛔ error";
+        heading.append(name, summary, badge);
+        const body = document.createElement("div");
+        body.className = "tool-body";
+        const label = document.createElement("strong");
+        label.textContent = "Argumentos";
+        const pre = document.createElement("pre");
+        pre.textContent = formatArgs(call?.args);
+        body.append(label, pre);
+        card.append(heading, body);
+        return card;
+      }
+
+      function formatArgs(args) {
+        try { return JSON.stringify(args ?? {}, null, 2); }
+        catch (_) { return text(args); }
+      }
+
+      function showThinking() {
+        const article = document.createElement("article");
+        article.id = "thinking";
+        article.className = "mensaje";
+        article.innerHTML = '<span class="pensando"><span class="texto">Pensando</span><span></span><span></span><span></span></span>';
+        chat.append(article);
+        scrollBottom();
+      }
+
+      function setWaiting(value) {
+        waiting = value;
+        input.disabled = value;
+        sendButton.disabled = value;
+        document.querySelectorAll(".ejemplo, #confirm, #cancel, #new-session").forEach((button) => { button.disabled = value; });
+        if (value) showThinking();
+        else document.querySelector("#thinking")?.remove();
+      }
+
+      async function submit(message) {
+        const cleanMessage = text(message).trim();
+        if (!cleanMessage || waiting) return;
+        addMessage(cleanMessage, "usuario");
+        input.value = "";
+        resizeInput();
+        confirmation.hidden = true;
+        setWaiting(true);
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId, message: cleanMessage })
+          });
+          const payload = await parseResponse(response);
+          if (!response.ok || payload?.error) throw new Error(text(payload?.error) || `El servidor respondió con estado ${response.status}.`);
+          if (typeof payload?.reply !== "string") throw new Error("El servidor devolvió una respuesta incompleta.");
+          addMessage(payload.reply, "agente");
+          addToolCalls(payload.toolCalls);
+          confirmation.hidden = payload.needsConfirmation !== true;
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : "No se pudo completar la solicitud.";
+          addMessage(`No pude procesar el mensaje. ${detail} Puedes intentar de nuevo; la sesión sigue activa.`, "agente", true);
+        } finally {
+          setWaiting(false);
+          input.focus();
+          scrollBottom();
+        }
+      }
+
+      async function parseResponse(response) {
+        try { return await response.json(); }
+        catch (_) { throw new Error("El servidor devolvió una respuesta que no se pudo leer."); }
+      }
+
+      async function checkHealth() {
+        try {
+          const response = await fetch("/api/health", { headers: { Accept: "application/json" } });
+          const health = await parseResponse(response);
+          if (!response.ok || health?.ok !== true) throw new Error();
+          statusDot.classList.add("ok");
+          const provider = text(health.provider);
+          const model = text(health.model);
+          statusText.textContent = [provider, model].filter(Boolean).join(" · ") || "Servicio disponible";
+        } catch (_) {
+          statusDot.classList.remove("ok");
+          statusText.textContent = "Servicio no disponible";
+        }
+      }
+
+      function resizeInput() {
+        input.style.height = "auto";
+        input.style.height = `${Math.min(input.scrollHeight, 150)}px`;
+      }
+
+      function scrollBottom() {
+        requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submit(input.value);
+      });
+      input.addEventListener("input", resizeInput);
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+      document.querySelectorAll(".ejemplo").forEach((button) => button.addEventListener("click", () => submit(button.textContent)));
+      document.querySelector("#confirm").addEventListener("click", () => submit("confirmo"));
+      document.querySelector("#cancel").addEventListener("click", () => submit("cancelar"));
+      document.querySelector("#new-session").addEventListener("click", resetSession);
+
+      checkHealth();
+      input.focus();
+    })();
+  </script>
+</body>
+</html>
