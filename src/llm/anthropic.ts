@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
+import { ErrorNegocio } from "../lib/error.ts"
 import type {
   DefinicionHerramienta,
   LlmAdapter,
@@ -45,6 +46,25 @@ function argumentosDe(input: unknown): Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input) ? { ...input } : {}
 }
 
+function textoDeEstado(e: InstanceType<typeof Anthropic.APIError>): string {
+  const detalle = (e.message ?? "").toLowerCase()
+  if (e.status === 401 || e.status === 403) return "la clave del modelo es inválida o no tiene permisos"
+  if (e.status === 429) return "se alcanzó el límite de solicitudes del modelo, espera un momento"
+  if (e.status === 402 || detalle.includes("credit balance")) return "la cuenta del modelo no tiene crédito suficiente"
+  if (e.status === 408 || e.status === 504) return "el modelo tardó demasiado en responder"
+  if (e.status === 529 || (e.status ?? 0) >= 500) return "el servicio del modelo no está disponible por ahora"
+  return "el modelo rechazó la solicitud"
+}
+
+/** Convierte errores del SDK en mensajes legibles; nunca expone el JSON crudo. */
+function traducirError(e: unknown): Error {
+  if (e instanceof ErrorNegocio) return e
+  if (e instanceof Anthropic.APIConnectionTimeoutError) return new ErrorNegocio("el modelo tardó demasiado en responder")
+  if (e instanceof Anthropic.APIConnectionError) return new ErrorNegocio("no se pudo conectar con el servicio del modelo")
+  if (e instanceof Anthropic.APIError) return new ErrorNegocio(textoDeEstado(e))
+  return new ErrorNegocio("error inesperado al consultar el modelo")
+}
+
 /** Implementación para Anthropic. La clave se lee solo de `ANTHROPIC_API_KEY`. */
 export class AnthropicLlm implements LlmAdapter {
   readonly proveedor = "anthropic"
@@ -57,17 +77,21 @@ export class AnthropicLlm implements LlmAdapter {
   }
 
   async enviar(mensajes: Mensaje[], herramientas: DefinicionHerramienta[], opts: OpcionesEnvio): Promise<RespuestaLlm> {
-    if (!this.cliente) throw new Error("Falta ANTHROPIC_API_KEY en el entorno del servidor")
-    const respuesta = await this.cliente.messages.create(
-      {
-        model: this.modelo,
-        max_tokens: opts.maxTokens,
-        system: [{ type: "text", text: opts.sistema, cache_control: { type: "ephemeral" } }],
-        tools: herramientas.map(aHerramientaApi),
-        messages: mensajes.map(aMensajeApi),
-      },
-      { signal: opts.signal },
-    )
-    return aRespuesta(respuesta)
+    if (!this.cliente) throw new ErrorNegocio("falta configurar la clave del modelo en el servidor")
+    try {
+      const respuesta = await this.cliente.messages.create(
+        {
+          model: this.modelo,
+          max_tokens: opts.maxTokens,
+          system: [{ type: "text", text: opts.sistema, cache_control: { type: "ephemeral" } }],
+          tools: herramientas.map(aHerramientaApi),
+          messages: mensajes.map(aMensajeApi),
+        },
+        { signal: opts.signal },
+      )
+      return aRespuesta(respuesta)
+    } catch (e) {
+      throw traducirError(e)
+    }
   }
 }
